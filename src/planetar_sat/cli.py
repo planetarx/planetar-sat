@@ -13,7 +13,7 @@ import click
 
 from planetar_sat.bus.chat import chat_envelope, detection_line, track_line
 from planetar_sat.bus.publisher import Publisher
-from planetar_sat.bus.zmesg import Envelope
+from planetar_sat.bus.zmesg import Envelope, uuid_str
 from planetar_sat.config import DEFAULT_BROKER, DEFAULT_CACHE_DIR, CDSECredentials
 from planetar_sat.detect.chip import GeoDetection, detect_scene
 from planetar_sat.fetch.aoi import resolve
@@ -46,6 +46,10 @@ def _publish_scene_results(
     acquisition time rather than wall-clock now.
     """
     n = 0
+    # Envelope id of each chip, keyed the same way the tracker stamps the
+    # matched detection onto its track (see Tracker._extend / new-track path),
+    # so track.update envelopes can cite the chip that caused them.
+    chip_ids: dict[tuple[int, float, float], str] = {}
     for d in dets:
         env = Envelope(
             topic="sar.chip",
@@ -56,6 +60,7 @@ def _publish_scene_results(
         if historical_ns is not None:
             env.created_at_ns = historical_ns
         pub.publish(env)
+        chip_ids[(d.acquired_at_ns, d.lat, d.lon)] = uuid_str(env.id)
         n += 1
 
     summary = detection_line(scene_id, len(dets))
@@ -64,6 +69,9 @@ def _publish_scene_results(
 
     updated = tracker.step(dets)
     for t in updated:
+        # The chip that extended (or spawned) this track — its envelope id is
+        # the track update's causation for the bus-wide distributed trace.
+        chip_id = chip_ids.get((t.last_seen_ns, t.lat, t.lon), "")
         payload = {
             "track_id": t.track_id,
             "lat": t.lat,
@@ -78,6 +86,7 @@ def _publish_scene_results(
             schema_name="planetar.track.update",
             schema_version=1,
             correlation_id=t.track_id,
+            causation_id=chip_id,
             payload=json.dumps(payload).encode("utf-8"),
         )
         if historical_ns is not None:
@@ -92,6 +101,7 @@ def _publish_scene_results(
                     track_line(t.track_id, t.lat, t.lon, t.speed_kn, t.n_hits),
                     channel=chat_chan,
                     created_at_ns=historical_ns,
+                    causation_id=chip_id,
                 )
             )
             n += 1

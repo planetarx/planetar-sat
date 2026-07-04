@@ -27,11 +27,16 @@ def chat_envelope(
     channel: str = DEFAULT_CHANNEL_SAR,
     server: str = DEFAULT_SERVER,
     created_at_ns: int | None = None,
+    causation_id: str = "",
 ) -> Envelope:
     """Build a chat-channel envelope that planetar-ui will render as a message line.
 
     The `created_at_ns` override is what makes historical replay show up as
     historical: pass the scene's acquisition timestamp, not `now`.
+
+    `causation_id`, when given, is the dashed-UUID envelope id of the message
+    this line announces (e.g. the sar.chip that extended a track), so the line
+    joins the bus-wide distributed trace.
     """
     topic = f"chat.{server}.{channel}"
     payload = {"text": text, "author": AUTHOR}
@@ -40,6 +45,7 @@ def chat_envelope(
         source=AUTHOR["id"],
         schema_name=CHAT_SCHEMA,
         schema_version=1,
+        causation_id=causation_id,
         payload=json.dumps(payload).encode("utf-8"),
     )
     if created_at_ns is not None:
